@@ -1562,6 +1562,378 @@
     },
   };
 
+  // --- Batch Export System (Gemini Only) ---
+  const BatchExporter = {
+    isRunning: false,
+    shouldStop: false,
+    currentChatIndex: 0,
+    totalChats: 0,
+    exportedChats: new Set(),
+    currentChatTitle: "",
+    BATCH_EXPORT_DELAY_KEY: "aiChatExporter_batchDelay",
+    BATCH_EXPORTED_CHATS_KEY: "aiChatExporter_batchExported",
+    DEFAULT_BATCH_DELAY: 3000,
+    CHAT_LOAD_TIMEOUT: 30000,
+
+    /**
+     * Get the configured delay between chat exports
+     */
+    getBatchDelay() {
+      return GM_getValue(this.BATCH_EXPORT_DELAY_KEY, this.DEFAULT_BATCH_DELAY);
+    },
+
+    /**
+     * Load previously exported chat URLs from localStorage
+     */
+    loadExportedChats() {
+      try {
+        const stored = localStorage.getItem(this.BATCH_EXPORTED_CHATS_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          this.exportedChats = new Set(parsed);
+        }
+      } catch (e) {
+        console.error("Error loading exported chats:", e);
+        this.exportedChats = new Set();
+      }
+    },
+
+    /**
+     * Save exported chat URL to localStorage
+     */
+    saveExportedChat(chatUrl) {
+      this.exportedChats.add(chatUrl);
+      try {
+        localStorage.setItem(
+          this.BATCH_EXPORTED_CHATS_KEY,
+          JSON.stringify([...this.exportedChats])
+        );
+      } catch (e) {
+        console.error("Error saving exported chat:", e);
+      }
+    },
+
+    /**
+     * Clear all exported chat history
+     */
+    clearExportedHistory() {
+      this.exportedChats.clear();
+      localStorage.removeItem(this.BATCH_EXPORTED_CHATS_KEY);
+    },
+
+    /**
+     * Get all conversation items from Gemini sidebar
+     */
+    getAllConversations() {
+      // Find all conversation items in the sidebar
+      const conversations = document.querySelectorAll('div[data-test-id="conversation"]');
+      return Array.from(conversations);
+    },
+
+    /**
+     * Extract chat URL from a conversation element
+     */
+    getChatUrl(conversationElement) {
+      // Try to find the link within the conversation
+      const link = conversationElement.querySelector('a[href*="/app/"]');
+      if (link) {
+        return link.href;
+      }
+      return null;
+    },
+
+    /**
+     * Click a conversation to load it
+     */
+    clickConversation(conversationElement) {
+      const link = conversationElement.querySelector('a[href*="/app/"]');
+      if (link) {
+        link.click();
+        return true;
+      }
+      return false;
+    },
+
+    /**
+     * Wait for chat to load by detecting message elements
+     */
+    async waitForChatLoad(timeoutMs = 30000) {
+      const startTime = Date.now();
+      const checkInterval = 100;
+
+      return new Promise((resolve) => {
+        const interval = setInterval(() => {
+          const messages = document.querySelectorAll(GEMINI_MESSAGE_ITEM_SELECTOR);
+          if (messages.length > 0) {
+            clearInterval(interval);
+            resolve(true);
+          } else if (Date.now() - startTime > timeoutMs) {
+            clearInterval(interval);
+            console.warn("Timeout waiting for chat to load");
+            resolve(false);
+          }
+        }, checkInterval);
+      });
+    },
+
+    /**
+     * Show progress overlay
+     */
+    showProgressOverlay(current, total, chatTitle) {
+      let overlay = document.getElementById("batch-export-progress-overlay");
+      
+      if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "batch-export-progress-overlay";
+        overlay.style.cssText = `
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          z-index: 10001;
+          background-color: rgba(91, 63, 135, 0.95);
+          color: white;
+          padding: 30px 40px;
+          border-radius: 12px;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+          font-family: ${FONT_STACK};
+          min-width: 400px;
+          text-align: center;
+        `;
+
+        const title = document.createElement("div");
+        title.style.cssText = "font-size: 18px; font-weight: bold; margin-bottom: 15px;";
+        title.textContent = "Batch Export In Progress";
+        overlay.appendChild(title);
+
+        const progress = document.createElement("div");
+        progress.id = "batch-export-progress-text";
+        progress.style.cssText = "font-size: 14px; margin-bottom: 20px; min-height: 40px;";
+        overlay.appendChild(progress);
+
+        const stopButton = document.createElement("button");
+        stopButton.textContent = "⏹ Stop";
+        stopButton.style.cssText = `
+          padding: 10px 20px;
+          background-color: #d32f2f;
+          color: white;
+          border: none;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 14px;
+          font-family: ${FONT_STACK};
+        `;
+        stopButton.onclick = () => {
+          BatchExporter.shouldStop = true;
+          stopButton.disabled = true;
+          stopButton.textContent = "Stopping...";
+          stopButton.style.backgroundColor = "#999";
+        };
+        overlay.appendChild(stopButton);
+
+        document.body.appendChild(overlay);
+      }
+
+      const progressText = document.getElementById("batch-export-progress-text");
+      if (progressText) {
+        progressText.innerHTML = `
+          <div style="font-size: 16px; margin-bottom: 8px;">
+            Exporting ${current} / ${total}
+          </div>
+          <div style="font-size: 12px; color: rgba(255,255,255,0.8); font-style: italic;">
+            ${Utils.truncate(chatTitle, 50)}
+          </div>
+        `;
+      }
+    },
+
+    /**
+     * Hide progress overlay
+     */
+    hideProgressOverlay() {
+      const overlay = document.getElementById("batch-export-progress-overlay");
+      if (overlay) {
+        overlay.remove();
+      }
+    },
+
+    /**
+     * Process a single chat: load, scroll, export
+     */
+    async processSingleChat(conversationElement, chatUrl) {
+      try {
+        // Click the conversation
+        const clicked = this.clickConversation(conversationElement);
+        if (!clicked) {
+          console.error("Failed to click conversation");
+          return false;
+        }
+
+        // Wait for chat to load
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Initial delay for navigation
+        const loaded = await this.waitForChatLoad(this.CHAT_LOAD_TIMEOUT);
+        if (!loaded) {
+          console.error("Chat failed to load:", chatUrl);
+          return false;
+        }
+
+        // Wait for auto-scroll to complete
+        // The auto-scroll is triggered by URL change, but we need to ensure it completes
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for auto-scroll to start
+        
+        // Wait for messages to stabilize (auto-scroll completion indicator)
+        let previousCount = 0;
+        let stableCount = 0;
+        const maxWaitTime = 60000; // 1 minute max wait
+        const startTime = Date.now();
+        
+        while (stableCount < 3 && (Date.now() - startTime) < maxWaitTime) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          const currentChatData = ChatExporter.extractGeminiChatData(document);
+          const currentCount = currentChatData ? currentChatData.messages.length : 0;
+          
+          if (currentCount === previousCount) {
+            stableCount++;
+          } else {
+            stableCount = 0;
+            previousCount = currentCount;
+          }
+        }
+
+        // Regenerate outline with fully loaded data
+        UIManager.addOutlineControls();
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Trigger export
+        ChatExporter.initiateExport('markdown');
+        
+        // Mark as exported
+        this.saveExportedChat(chatUrl);
+
+        return true;
+      } catch (error) {
+        console.error("Error processing chat:", error);
+        return false;
+      }
+    },
+
+    /**
+     * Main batch export function
+     */
+    async startBatchExport() {
+      if (this.isRunning) {
+        alert("Batch export is already running!");
+        return;
+      }
+
+      if (CURRENT_PLATFORM !== GEMINI) {
+        alert("Batch export is only available for Gemini!");
+        return;
+      }
+
+      // Load previously exported chats
+      this.loadExportedChats();
+
+      // Get all conversations
+      const allConversations = this.getAllConversations();
+      if (allConversations.length === 0) {
+        alert("No conversations found in sidebar!");
+        return;
+      }
+
+      // Filter out already exported chats
+      const conversationsToExport = [];
+      for (const conv of allConversations) {
+        const url = this.getChatUrl(conv);
+        if (url && !this.exportedChats.has(url)) {
+          conversationsToExport.push({ element: conv, url: url });
+        }
+      }
+
+      if (conversationsToExport.length === 0) {
+        const resetHistory = confirm(
+          `All ${allConversations.length} conversations have already been exported!\n\n` +
+          `Click OK to reset export history and re-export all chats.\n` +
+          `Click Cancel to abort.`
+        );
+        
+        if (resetHistory) {
+          this.clearExportedHistory();
+          // Retry with cleared history
+          return this.startBatchExport();
+        }
+        return;
+      }
+
+      const confirmStart = confirm(
+        `Start batch export of ${conversationsToExport.length} conversations?\n\n` +
+        `(${this.exportedChats.size} already exported, ${conversationsToExport.length} remaining)\n\n` +
+        `This will take approximately ${Math.ceil(conversationsToExport.length * (this.getBatchDelay() / 1000))} seconds.`
+      );
+
+      if (!confirmStart) {
+        return;
+      }
+
+      this.isRunning = true;
+      this.shouldStop = false;
+      this.totalChats = conversationsToExport.length;
+      this.currentChatIndex = 0;
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < conversationsToExport.length; i++) {
+        if (this.shouldStop) {
+          console.log("Batch export stopped by user");
+          break;
+        }
+
+        this.currentChatIndex = i + 1;
+        const { element, url } = conversationsToExport[i];
+
+        // Extract title for progress display
+        const titleElem = element.querySelector('.conversation-title');
+        this.currentChatTitle = titleElem ? titleElem.textContent.trim() : `Chat ${i + 1}`;
+
+        this.showProgressOverlay(this.currentChatIndex, this.totalChats, this.currentChatTitle);
+
+        console.log(`Processing chat ${this.currentChatIndex}/${this.totalChats}: ${this.currentChatTitle}`);
+
+        const success = await this.processSingleChat(element, url);
+        
+        if (success) {
+          successCount++;
+          console.log(`✓ Successfully exported: ${this.currentChatTitle}`);
+        } else {
+          failCount++;
+          console.error(`✗ Failed to export: ${this.currentChatTitle}`);
+        }
+
+        // Wait delay before next chat (except for last one)
+        if (i < conversationsToExport.length - 1 && !this.shouldStop) {
+          await new Promise(resolve => setTimeout(resolve, this.getBatchDelay()));
+        }
+      }
+
+      this.hideProgressOverlay();
+      this.isRunning = false;
+
+      const message = this.shouldStop 
+        ? `Batch export stopped.\n\nExported: ${successCount}\nFailed: ${failCount}\nRemaining: ${this.totalChats - this.currentChatIndex}`
+        : `Batch export complete!\n\nSuccessfully exported: ${successCount}\nFailed: ${failCount}`;
+
+      alert(message);
+    },
+
+    /**
+     * Stop the batch export process
+     */
+    stopBatchExport() {
+      this.shouldStop = true;
+    }
+  };
+
   // --- Injected CSS for Theme Overrides ---
   function injectThemeOverrideStyles() {
     const styleElement = document.createElement("style");
@@ -1741,6 +2113,21 @@
       });
       container.appendChild(settingsButton);
       // --- End Settings Button ---
+
+      // --- Batch Export Button (Gemini Only) ---
+      if (CURRENT_PLATFORM === GEMINI) {
+        const batchExportButton = document.createElement("button");
+        batchExportButton.id = "export-batch-btn";
+        batchExportButton.textContent = "🔄 Export All";
+        batchExportButton.title = `${EXPORT_BUTTON_TITLE_PREFIX}: Batch Export All Conversations`;
+        Utils.applyStyles(batchExportButton, {
+          ...BUTTON_BASE_PROPS,
+          ...BUTTON_SPACING_PROPS,
+        });
+        batchExportButton.onclick = () => BatchExporter.startBatchExport();
+        container.appendChild(batchExportButton);
+      }
+      // --- End Batch Export Button ---
 
       document.body.appendChild(container);
     },
