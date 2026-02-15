@@ -1755,7 +1755,9 @@
     getAllConversations() {
       // Find all conversation items in the sidebar
       const conversations = document.querySelectorAll('div[data-test-id="conversation"]');
-      return Array.from(conversations);
+      // Process oldest first (bottom of sidebar) to avoid reordering
+      // if an accidental prompt bubbles a chat to the top
+      return Array.from(conversations).reverse();
     },
 
     /**
