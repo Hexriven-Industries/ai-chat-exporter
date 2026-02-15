@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.10.0
+// @version      2.11.0
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -20,7 +20,7 @@
   "use strict";
 
   // --- Global Constants ---
-  const EXPORTER_VERSION = "2.10.0";
+  const EXPORTER_VERSION = "2.11.0";
   const EXPORT_CONTAINER_ID = "export-controls-container";
   const OUTLINE_CONTAINER_ID = "export-outline-container"; // ID for the outline div
   const DOM_READY_TIMEOUT = 1000;
@@ -1709,10 +1709,11 @@
     shouldStop: false,
     currentChatIndex: 0,
     totalChats: 0,
-    exportedChats: new Set(),
+    exportedChats: new Map(), // Map<url, {count, title}>
     currentChatTitle: "",
     BATCH_EXPORT_DELAY_KEY: "aiChatExporter_batchDelay",
     BATCH_EXPORTED_CHATS_KEY: "aiChatExporter_batchExported",
+    BATCH_EXPORTED_COUNTS_KEY: "aiChatExporter_batchExportedCounts",
     DEFAULT_BATCH_DELAY: 3000,
     CHAT_LOAD_TIMEOUT: 30000,
 
@@ -1724,34 +1725,61 @@
     },
 
     /**
-     * Load previously exported chat URLs from localStorage
+     * Load previously exported chat URLs + counts from localStorage
      */
     loadExportedChats() {
       try {
+        // Try new format first (Map with counts)
+        const storedCounts = localStorage.getItem(this.BATCH_EXPORTED_COUNTS_KEY);
+        if (storedCounts) {
+          const parsed = JSON.parse(storedCounts);
+          this.exportedChats = new Map(Object.entries(parsed));
+          return;
+        }
+        // Fall back to old format (Set of URLs) for backward compat
         const stored = localStorage.getItem(this.BATCH_EXPORTED_CHATS_KEY);
         if (stored) {
           const parsed = JSON.parse(stored);
-          this.exportedChats = new Set(parsed);
+          this.exportedChats = new Map(parsed.map(url => [url, { count: 0 }]));
         }
       } catch (e) {
         console.error("Error loading exported chats:", e);
-        this.exportedChats = new Set();
+        this.exportedChats = new Map();
       }
     },
 
     /**
-     * Save exported chat URL to localStorage
+     * Save exported chat URL + message count to localStorage
      */
-    saveExportedChat(chatUrl) {
-      this.exportedChats.add(chatUrl);
+    saveExportedChat(chatUrl, messageCount = 0, title = "") {
+      this.exportedChats.set(chatUrl, { count: messageCount, title });
       try {
+        const obj = Object.fromEntries(this.exportedChats);
+        localStorage.setItem(
+          this.BATCH_EXPORTED_COUNTS_KEY,
+          JSON.stringify(obj)
+        );
+        // Also update legacy key for compat
         localStorage.setItem(
           this.BATCH_EXPORTED_CHATS_KEY,
-          JSON.stringify([...this.exportedChats])
+          JSON.stringify([...this.exportedChats.keys()])
         );
       } catch (e) {
         console.error("Error saving exported chat:", e);
       }
+    },
+
+    /**
+     * Check if a chat needs re-export (not exported, or live count > stored count)
+     */
+    needsExport(chatUrl, liveMessageCount) {
+      if (!this.exportedChats.has(chatUrl)) return true;
+      const stored = this.exportedChats.get(chatUrl);
+      if (liveMessageCount > (stored.count || 0)) {
+        console.log(`[BatchExport] Re-exporting ${chatUrl}: live=${liveMessageCount} > stored=${stored.count}`);
+        return true;
+      }
+      return false;
     },
 
     /**
@@ -1760,6 +1788,7 @@
     clearExportedHistory() {
       this.exportedChats.clear();
       localStorage.removeItem(this.BATCH_EXPORTED_CHATS_KEY);
+      localStorage.removeItem(this.BATCH_EXPORTED_COUNTS_KEY);
     },
 
     /**
@@ -2000,6 +2029,17 @@
         // Brief stabilization pause
         await new Promise(resolve => setTimeout(resolve, 1000));
 
+        // Count live messages to check against previous export
+        const liveChatData = ChatExporter.extractGeminiChatData(document);
+        const liveCount = liveChatData ? liveChatData.messages.length : 0;
+        const chatTitle = liveChatData ? liveChatData.title : "";
+        
+        // Skip if already exported with same or higher message count
+        if (!this.needsExport(chatUrl, liveCount)) {
+          console.log(`[BatchExport] Skipping "${chatTitle}" — already exported with ${liveCount} messages`);
+          return true; // Count as success (already done)
+        }
+
         // Regenerate outline with fully loaded data
         UIManager.addOutlineControls();
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -2007,8 +2047,8 @@
         // Trigger export (await to ensure images are downloaded before continuing)
         await ChatExporter.initiateExport('markdown');
         
-        // Mark as exported
-        this.saveExportedChat(chatUrl);
+        // Mark as exported WITH message count
+        this.saveExportedChat(chatUrl, liveCount, chatTitle);
 
         return true;
       } catch (error) {
@@ -2045,33 +2085,22 @@
         return;
       }
 
-      // Filter out already exported chats
+      // Build list of all conversations with URLs
       const conversationsToExport = [];
       for (const conv of allConversations) {
         const url = this.getChatUrl(conv);
-        if (url && !this.exportedChats.has(url)) {
+        if (url) {
           conversationsToExport.push({ element: conv, url: url });
         }
       }
 
-      if (conversationsToExport.length === 0) {
-        const resetHistory = confirm(
-          `All ${allConversations.length} conversations have already been exported!\n\n` +
-          `Click OK to reset export history and re-export all chats.\n` +
-          `Click Cancel to abort.`
-        );
-        
-        if (resetHistory) {
-          this.clearExportedHistory();
-          // Retry with cleared history
-          return this.startBatchExport();
-        }
-        return;
-      }
+      // Count how many are completely new vs previously exported
+      const newCount = conversationsToExport.filter(c => !this.exportedChats.has(c.url)).length;
+      const previouslyExported = conversationsToExport.length - newCount;
 
       const confirmStart = confirm(
-        `Start batch export of ${conversationsToExport.length} conversations?\n\n` +
-        `(${this.exportedChats.size} already exported, ${conversationsToExport.length} remaining)\n\n` +
+        `Batch export ${conversationsToExport.length} conversations?\n\n` +
+        `${newCount} new + ${previouslyExported} to verify (will skip if message count unchanged).\n\n` +
         `This will take approximately ${Math.ceil(conversationsToExport.length * (this.getBatchDelay() / 1000))} seconds.`
       );
 
