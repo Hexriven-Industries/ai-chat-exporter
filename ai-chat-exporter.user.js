@@ -1764,7 +1764,10 @@
      * Extract chat URL from a conversation element
      */
     getChatUrl(conversationElement) {
-      // Try to find the link within the conversation
+      // The conversation element may itself be an <a> tag or contain one
+      if (conversationElement.tagName === 'A' && conversationElement.href && conversationElement.href.includes('/app/')) {
+        return conversationElement.href;
+      }
       const link = conversationElement.querySelector('a[href*="/app/"]');
       if (link) {
         return link.href;
@@ -1776,6 +1779,11 @@
      * Click a conversation to load it
      */
     clickConversation(conversationElement) {
+      // The conversation element may itself be the clickable <a> tag
+      if (conversationElement.tagName === 'A') {
+        conversationElement.click();
+        return true;
+      }
       const link = conversationElement.querySelector('a[href*="/app/"]');
       if (link) {
         link.click();
