@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.9.2
+// @version      2.9.3
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -20,7 +20,7 @@
   "use strict";
 
   // --- Global Constants ---
-  const EXPORTER_VERSION = "2.9.2";
+  const EXPORTER_VERSION = "2.9.3";
   const EXPORT_CONTAINER_ID = "export-controls-container";
   const OUTLINE_CONTAINER_ID = "export-outline-container"; // ID for the outline div
   const DOM_READY_TIMEOUT = 1000;
@@ -883,13 +883,22 @@
           messageContentElem = item.querySelector("div.query-content");
         } else if (tagName === "model-response") {
           author = "ai";
-          messageContentElem = item.querySelector("message-content");
           
-          // Check for thinking/chain-of-thought block
+          // Check for thinking/chain-of-thought block FIRST
           const thinkingBlock = item.querySelector('div[data-test-id="thoughts-content"]');
           if (thinkingBlock) {
             // Extract the actual thinking content (message-content inside the thinking block)
             thinkingContentElem = thinkingBlock.querySelector("message-content");
+          }
+          
+          // Get the main response content, EXCLUDING any message-content inside thinking blocks
+          // We need the message-content that is NOT a descendant of thoughts-content
+          const allMessageContents = item.querySelectorAll("message-content");
+          for (const mc of allMessageContents) {
+            if (!mc.closest('div[data-test-id="thoughts-content"]')) {
+              messageContentElem = mc;
+              break;
+            }
           }
         }
 
