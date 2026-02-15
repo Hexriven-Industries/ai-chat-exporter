@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.9.3
+// @version      2.10.0
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -20,7 +20,7 @@
   "use strict";
 
   // --- Global Constants ---
-  const EXPORTER_VERSION = "2.9.3";
+  const EXPORTER_VERSION = "2.10.0";
   const EXPORT_CONTAINER_ID = "export-controls-container";
   const OUTLINE_CONTAINER_ID = "export-outline-container"; // ID for the outline div
   const DOM_READY_TIMEOUT = 1000;
@@ -1989,31 +1989,16 @@
           return false;
         }
 
-        // Wait for auto-scroll to complete
-        // The auto-scroll is triggered by URL change, but we need to ensure it completes
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for auto-scroll to start
+        // Actively scroll to top to load ALL messages (don't rely on passive auto-scroll)
+        // Reset the URL tracker so autoScrollToTop doesn't skip this chat
+        UIManager._lastProcessedChatUrl = null;
+        await UIManager.autoScrollToTop();
         
-        // Expand all thinking blocks before extraction
+        // Expand all thinking blocks after full chat is loaded
         await ChatExporter.expandAllThinkingBlocks();
         
-        // Wait for messages to stabilize (auto-scroll completion indicator)
-        let previousCount = 0;
-        let stableCount = 0;
-        const maxWaitTime = 60000; // 1 minute max wait
-        const startTime = Date.now();
-        
-        while (stableCount < 3 && (Date.now() - startTime) < maxWaitTime) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          const currentChatData = ChatExporter.extractGeminiChatData(document);
-          const currentCount = currentChatData ? currentChatData.messages.length : 0;
-          
-          if (currentCount === previousCount) {
-            stableCount++;
-          } else {
-            stableCount = 0;
-            previousCount = currentCount;
-          }
-        }
+        // Brief stabilization pause
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Regenerate outline with fully loaded data
         UIManager.addOutlineControls();
@@ -3030,10 +3015,10 @@
       // );
 
       const AUTOSCROLL_MAT_PROGRESS_BAR_POLL_INTERVAL = 50;
-      const AUTOSCROLL_MAT_PROGRESS_BAR_APPEAR_TIMEOUT = 3000;
-      const AUTOSCROLL_MAT_PROGRESS_BAR_DISAPPEAR_TIMEOUT = 5000;
+      const AUTOSCROLL_MAT_PROGRESS_BAR_APPEAR_TIMEOUT = 5000;
+      const AUTOSCROLL_MAT_PROGRESS_BAR_DISAPPEAR_TIMEOUT = 10000;
       const AUTOSCROLL_REPEAT_DELAY = 500;
-      const AUTOSCROLL_MAX_RETRY = 3;
+      const AUTOSCROLL_MAX_RETRY = 6;
       const MESSAGE_ELEMENT_APPEAR_TIMEOUT = 5000;
 
       let previousMessageCount = -1;
