@@ -426,7 +426,7 @@
      * @param {string} filename - The filename to save the image as.
      * @returns {Promise<boolean>} - Resolves to true if successful, false otherwise.
      */
-    downloadImage(imageUrl, filename) {
+    downloadImageAsBase64(imageUrl) {
       return new Promise((resolve) => {
         GM_xmlhttpRequest({
           method: "GET",
@@ -435,21 +435,24 @@
           onload: (response) => {
             if (response.status === 200) {
               const blob = response.response;
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = filename;
-              a.click();
-              URL.revokeObjectURL(url);
-              resolve(true);
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                // reader.result is already a data:... URI
+                resolve(reader.result);
+              };
+              reader.onerror = () => {
+                console.error(`Failed to convert image to base64: ${imageUrl}`);
+                resolve(null);
+              };
+              reader.readAsDataURL(blob);
             } else {
               console.error(`Failed to download image ${imageUrl}: Status ${response.status}`);
-              resolve(false);
+              resolve(null);
             }
           },
           onerror: (error) => {
             console.error(`Error downloading image ${imageUrl}:`, error);
-            resolve(false);
+            resolve(null);
           },
         });
       });
@@ -1643,30 +1646,22 @@
         if (downloadImages) {
           const images = Utils.extractImagesFromChatData(chatDataForExport);
           if (images.length > 0) {
-            console.log(`Found ${images.length} images to download`);
+            console.log(`Found ${images.length} images to embed as base64`);
             imageUrlMap = new Map();
-            const baseFilename = Utils.formatFileName(
-              GM_getValue(GM_OUTPUT_FILE_FORMAT, OUTPUT_FILE_FORMAT_DEFAULT),
-              chatDataForExport.title,
-              chatDataForExport.tags,
-              ""
-            ).replace(/\.(md|json)$/i, ""); // Remove extension
 
             for (let i = 0; i < images.length; i++) {
               const img = images[i];
-              const ext = Utils.getImageExtension(img.url);
-              const filename = `${baseFilename}_img${i + 1}${ext}`;
               
-              console.log(`Downloading image ${i + 1}/${images.length}: ${filename}`);
-              const success = await Utils.downloadImage(img.url, filename);
+              console.log(`Downloading image ${i + 1}/${images.length} for embedding...`);
+              const dataUri = await Utils.downloadImageAsBase64(img.url);
               
-              if (success) {
-                imageUrlMap.set(img.url, filename);
+              if (dataUri) {
+                imageUrlMap.set(img.url, dataUri);
               } else {
                 console.warn(`Failed to download ${img.url}, keeping original URL in markdown`);
               }
 
-              // Add delay between downloads to avoid browser blocking
+              // Add delay between downloads to avoid rate limiting
               if (i < images.length - 1) {
                 await new Promise((resolve) => setTimeout(resolve, IMAGE_DOWNLOAD_DELAY));
               }
