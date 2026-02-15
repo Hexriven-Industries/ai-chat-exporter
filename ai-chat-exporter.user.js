@@ -748,6 +748,24 @@
     },
 
     /**
+     * Expands all collapsed Gemini thinking blocks before extraction.
+     * Gemini's chain-of-thought/thinking content is not in the DOM until
+     * the user clicks "Show thinking" to expand it.
+     * @returns {Promise<void>}
+     */
+    async expandAllThinkingBlocks() {
+      const buttons = document.querySelectorAll('button[data-test-id="thoughts-header-button"]');
+      for (const button of buttons) {
+        // Check if not already expanded
+        const content = button.closest('model-response')?.querySelector('.thoughts-content-expanded');
+        if (!content) {
+          button.click();
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+    },
+
+    /**
      * Extracts chat data from Gemini's DOM structure.
      * @param {Document} doc - The Document object.
      * @returns {object|null} The standardized chat data, or null.
@@ -1781,6 +1799,9 @@
         // The auto-scroll is triggered by URL change, but we need to ensure it completes
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for auto-scroll to start
         
+        // Expand all thinking blocks before extraction
+        await ChatExporter.expandAllThinkingBlocks();
+        
         // Wait for messages to stabilize (auto-scroll completion indicator)
         let previousCount = 0;
         let stableCount = 0;
@@ -2158,7 +2179,7 @@
      * Generates and updates the content of the outline div.
      * This function should be called whenever the chat data changes.
      */
-    generateOutlineContent() {
+    async generateOutlineContent() {
       const outlineContainer = document.querySelector(
         `#${OUTLINE_CONTAINER_ID}`
       );
@@ -2177,6 +2198,7 @@
           freshChatData = ChatExporter.extractCopilotChatData(document);
           break;
         case GEMINI:
+          await ChatExporter.expandAllThinkingBlocks();
           freshChatData = ChatExporter.extractGeminiChatData(document);
           break;
         default:
@@ -2882,6 +2904,9 @@
         UIManager.initUrlChangeObserver();
         UIManager._initialListenersAttached = true; // Mark that they are attached
       }
+
+      // Expand all thinking blocks before auto-scroll loop
+      await ChatExporter.expandAllThinkingBlocks();
 
       while (true) {
         scrollableElement.scrollTop = 0;
