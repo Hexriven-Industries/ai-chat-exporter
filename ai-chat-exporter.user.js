@@ -34,7 +34,7 @@
   const OUTPUT_FILE_FORMAT_DEFAULT = "{platform}_{title}_{timestampLocal}";
   const GM_OUTPUT_FILE_FORMAT = "aiChatExporter_fileFormat";
   const GM_DOWNLOAD_IMAGES = "aiChatExporter_downloadImages";
-  const IMAGE_DOWNLOAD_DELAY = 200; // ms between image downloads to avoid browser blocking
+  const IMAGE_DOWNLOAD_DELAY = 200; // ms between image conversions to avoid rate limiting
 
   // --- Font Stack for UI Elements ---
   const FONT_STACK = `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"`;
@@ -489,16 +489,6 @@
       });
 
       return images;
-    },
-
-    /**
-     * Gets the file extension from a URL or defaults to .png.
-     * @param {string} url - The image URL.
-     * @returns {string} - The file extension (including the dot).
-     */
-    getImageExtension(url) {
-      const match = url.match(/\.(png|jpg|jpeg|gif|webp|svg)(\?|$)/i);
-      return match ? `.${match[1].toLowerCase()}` : ".png";
     },
 
     /**
@@ -1535,7 +1525,7 @@
           const alt = node.alt || "";
           if (!src) return "";
 
-          // Use local filename if available, otherwise use original URL
+          // Use base64 data URI if available, otherwise use original URL
           const finalSrc = imageUrlMap && imageUrlMap.has(src) ? imageUrlMap.get(src) : src;
           return `![${alt}](${finalSrc})`;
         },
@@ -1639,32 +1629,30 @@
       let fileName = null;
       let mimeType = "";
 
-      // Handle image downloading if enabled (only for markdown)
+      // Handle image embedding if enabled (for both markdown and JSON)
       let imageUrlMap = null;
-      if (format === "markdown") {
-        const downloadImages = GM_getValue(GM_DOWNLOAD_IMAGES, true);
-        if (downloadImages) {
-          const images = Utils.extractImagesFromChatData(chatDataForExport);
-          if (images.length > 0) {
-            console.log(`Found ${images.length} images to embed as base64`);
-            imageUrlMap = new Map();
+      const downloadImages = GM_getValue(GM_DOWNLOAD_IMAGES, true);
+      if (downloadImages) {
+        const images = Utils.extractImagesFromChatData(chatDataForExport);
+        if (images.length > 0) {
+          console.log(`Found ${images.length} images to embed as base64`);
+          imageUrlMap = new Map();
 
-            for (let i = 0; i < images.length; i++) {
-              const img = images[i];
-              
-              console.log(`Downloading image ${i + 1}/${images.length} for embedding...`);
-              const dataUri = await Utils.downloadImageAsBase64(img.url);
-              
-              if (dataUri) {
-                imageUrlMap.set(img.url, dataUri);
-              } else {
-                console.warn(`Failed to download ${img.url}, keeping original URL in markdown`);
-              }
+          for (let i = 0; i < images.length; i++) {
+            const img = images[i];
+            
+            console.log(`Converting image ${i + 1}/${images.length} to base64...`);
+            const dataUri = await Utils.downloadImageAsBase64(img.url);
+            
+            if (dataUri) {
+              imageUrlMap.set(img.url, dataUri);
+            } else {
+              console.warn(`Failed to convert ${img.url}, keeping original URL`);
+            }
 
-              // Add delay between downloads to avoid rate limiting
-              if (i < images.length - 1) {
-                await new Promise((resolve) => setTimeout(resolve, IMAGE_DOWNLOAD_DELAY));
-              }
+            // Add delay between downloads to avoid rate limiting
+            if (i < images.length - 1) {
+              await new Promise((resolve) => setTimeout(resolve, IMAGE_DOWNLOAD_DELAY));
             }
           }
         }
@@ -2250,24 +2238,26 @@
           console.log("New filename format saved:", newFormat);
         }
 
-        // Show download images toggle
+        // Show embed images toggle
         const toggleImages = window.confirm(
           `+++++++  ${EXPORT_BUTTON_TITLE_PREFIX}  +++++++\n\n` +
-            `DOWNLOAD IMAGES (Gemini only)\n\n` +
+            `EMBED IMAGES AS BASE64 (Gemini only)\n\n` +
             `Current setting: ${downloadImages ? "ENABLED" : "DISABLED"}\n\n` +
-            `When enabled, images will be downloaded alongside Markdown exports.\n` +
-            `Image URLs in the markdown will be replaced with local filenames.\n\n` +
-            `Click OK to ENABLE image downloads.\n` +
-            `Click Cancel to DISABLE image downloads.`
+            `When enabled, images will be embedded directly in the Markdown/JSON\n` +
+            `as base64 data URIs. This creates self-contained files with no\n` +
+            `external image dependencies.\n\n` +
+            `Note: This increases file size but ensures portability.\n\n` +
+            `Click OK to ENABLE image embedding.\n` +
+            `Click Cancel to DISABLE image embedding.`
         );
 
         GM_setValue(GM_DOWNLOAD_IMAGES, toggleImages);
-        console.log("Download images setting:", toggleImages ? "ENABLED" : "DISABLED");
+        console.log("Embed images setting:", toggleImages ? "ENABLED" : "DISABLED");
         
         alert(
           "Settings updated successfully!\n\n" +
             `• Filename format: ${newFormat !== null ? newFormat : currentFormat}\n` +
-            `• Download images: ${toggleImages ? "ENABLED" : "DISABLED"}`
+            `• Embed images: ${toggleImages ? "ENABLED" : "DISABLED"}`
         );
       });
       container.appendChild(settingsButton);
