@@ -778,11 +778,14 @@
 
       let title = DEFAULT_CHAT_TITLE;
 
-      // Prioritize title from sidebar if available and not generic
+      // Prioritize title from header bar, then sidebar, then document title
+      const headerTitle = doc.querySelector('span[data-test-id="conversation-title"]');
       const sidebarActiveChatItem = doc.querySelector(
         GEMINI_SIDEBAR_ACTIVE_CHAT_SELECTOR
       );
-      if (sidebarActiveChatItem && sidebarActiveChatItem.textContent.trim()) {
+      if (headerTitle && headerTitle.textContent.trim()) {
+        title = headerTitle.textContent.trim();
+      } else if (sidebarActiveChatItem && sidebarActiveChatItem.textContent.trim()) {
         title = sidebarActiveChatItem.textContent.trim();
       } else {
         title = doc.title;
