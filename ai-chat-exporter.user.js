@@ -13,6 +13,7 @@
 // @match        https://gemini.google.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
 (function () {
@@ -32,6 +33,8 @@
   const OUTLINE_TITLE_ID = "ai-chat-exporter-outline-title";
   const OUTPUT_FILE_FORMAT_DEFAULT = "{platform}_{title}_{timestampLocal}";
   const GM_OUTPUT_FILE_FORMAT = "aiChatExporter_fileFormat";
+  const GM_DOWNLOAD_IMAGES = "aiChatExporter_downloadImages";
+  const IMAGE_DOWNLOAD_DELAY = 200; // ms between image downloads to avoid browser blocking
 
   // --- Font Stack for UI Elements ---
   const FONT_STACK = `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"`;
@@ -415,6 +418,84 @@
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+    },
+
+    /**
+     * Downloads an image from a URL using GM_xmlhttpRequest to bypass CORS.
+     * @param {string} imageUrl - The URL of the image to download.
+     * @param {string} filename - The filename to save the image as.
+     * @returns {Promise<boolean>} - Resolves to true if successful, false otherwise.
+     */
+    downloadImage(imageUrl, filename) {
+      return new Promise((resolve) => {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: imageUrl,
+          responseType: "blob",
+          onload: (response) => {
+            if (response.status === 200) {
+              const blob = response.response;
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = filename;
+              a.click();
+              URL.revokeObjectURL(url);
+              resolve(true);
+            } else {
+              console.error(`Failed to download image ${imageUrl}: Status ${response.status}`);
+              resolve(false);
+            }
+          },
+          onerror: (error) => {
+            console.error(`Error downloading image ${imageUrl}:`, error);
+            resolve(false);
+          },
+        });
+      });
+    },
+
+    /**
+     * Extracts all image URLs from chat data.
+     * @param {object} chatData - The standardized chat data.
+     * @returns {Array<{url: string, element: HTMLImageElement}>} - Array of image info objects.
+     */
+    extractImagesFromChatData(chatData) {
+      const images = [];
+      const seenUrls = new Set();
+
+      chatData.messages.forEach((msg) => {
+        // Check both main content and thinking blocks
+        const htmlContents = [msg.contentHtml];
+        if (msg.thinkingHtml) {
+          htmlContents.push(msg.thinkingHtml);
+        }
+
+        htmlContents.forEach((htmlContent) => {
+          if (htmlContent) {
+            const imgElements = htmlContent.querySelectorAll("img");
+            imgElements.forEach((img) => {
+              const src = img.getAttribute("src");
+              if (src && !seenUrls.has(src)) {
+                seenUrls.add(src);
+                images.push({ url: src, element: img });
+              }
+            });
+          }
+        });
+      });
+
+      return images;
+    },
+
+    /**
+     * Gets the file extension from a URL or defaults to .png.
+     * @param {string} url - The image URL.
+     * @returns {string} - The file extension (including the dot).
+     */
+    getImageExtension(url) {
+      const match = url.match(/\.(png|jpg|jpeg|gif|webp|svg)(\?|$)/i);
+      return match ? `.${match[1].toLowerCase()}` : ".png";
     },
 
     /**
@@ -1049,7 +1130,7 @@
      * This function setups the rules for turndownServiceInstance
      * @param {TurndownService} turndownServiceInstance - Configured TurndownService.
      */
-    setupTurndownRules(turndownServiceInstance) {
+    setupTurndownRules(turndownServiceInstance, imageUrlMap = null) {
       if (CURRENT_PLATFORM === CHATGPT) {
         turndownServiceInstance.addRule("chatgptRemoveReactions", {
           filter: (node) =>
@@ -1449,7 +1530,11 @@
         replacement: (content, node) => {
           const src = node.getAttribute("src") || "";
           const alt = node.alt || "";
-          return src ? `![${alt}](${src})` : "";
+          if (!src) return "";
+
+          // Use local filename if available, otherwise use original URL
+          const finalSrc = imageUrlMap && imageUrlMap.has(src) ? imageUrlMap.get(src) : src;
+          return `![${alt}](${finalSrc})`;
         },
       });
     },
@@ -1459,7 +1544,7 @@
      * This function now filters messages based on _selectedMessageIds and visibility.
      * @param {string} format - The desired output format ('markdown' or 'json').
      */
-    initiateExport(format) {
+    async initiateExport(format) {
       // Use the _currentChatData that matches the outline's IDs
       const rawChatData = ChatExporter._currentChatData;
       let turndownServiceInstance = null;
@@ -1551,8 +1636,47 @@
       let fileName = null;
       let mimeType = "";
 
+      // Handle image downloading if enabled (only for markdown)
+      let imageUrlMap = null;
+      if (format === "markdown") {
+        const downloadImages = GM_getValue(GM_DOWNLOAD_IMAGES, true);
+        if (downloadImages) {
+          const images = Utils.extractImagesFromChatData(chatDataForExport);
+          if (images.length > 0) {
+            console.log(`Found ${images.length} images to download`);
+            imageUrlMap = new Map();
+            const baseFilename = Utils.formatFileName(
+              GM_getValue(GM_OUTPUT_FILE_FORMAT, OUTPUT_FILE_FORMAT_DEFAULT),
+              chatDataForExport.title,
+              chatDataForExport.tags,
+              ""
+            ).replace(/\.(md|json)$/i, ""); // Remove extension
+
+            for (let i = 0; i < images.length; i++) {
+              const img = images[i];
+              const ext = Utils.getImageExtension(img.url);
+              const filename = `${baseFilename}_img${i + 1}${ext}`;
+              
+              console.log(`Downloading image ${i + 1}/${images.length}: ${filename}`);
+              const success = await Utils.downloadImage(img.url, filename);
+              
+              if (success) {
+                imageUrlMap.set(img.url, filename);
+              } else {
+                console.warn(`Failed to download ${img.url}, keeping original URL in markdown`);
+              }
+
+              // Add delay between downloads to avoid browser blocking
+              if (i < images.length - 1) {
+                await new Promise((resolve) => setTimeout(resolve, IMAGE_DOWNLOAD_DELAY));
+              }
+            }
+          }
+        }
+      }
+
       turndownServiceInstance = new TurndownService();
-      ChatExporter.setupTurndownRules(turndownServiceInstance);
+      ChatExporter.setupTurndownRules(turndownServiceInstance, imageUrlMap);
 
       if (format === "markdown") {
         // Pass the filtered chat data to formatToMarkdown
@@ -1828,8 +1952,8 @@
         UIManager.addOutlineControls();
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        // Trigger export
-        ChatExporter.initiateExport('markdown');
+        // Trigger export (await to ensure images are downloaded before continuing)
+        await ChatExporter.initiateExport('markdown');
         
         // Mark as exported
         this.saveExportedChat(chatUrl);
@@ -2103,6 +2227,9 @@
           GM_OUTPUT_FILE_FORMAT,
           OUTPUT_FILE_FORMAT_DEFAULT
         );
+        const downloadImages = GM_getValue(GM_DOWNLOAD_IMAGES, true);
+        
+        // Show filename format prompt first
         const newFormat = window.prompt(
           `+++++++  ${EXPORT_BUTTON_TITLE_PREFIX}  +++++++\n\n ` +
             `ENTER NEW FILENAME FORMAT:\n` +
@@ -2125,15 +2252,28 @@
 
         if (newFormat !== null && newFormat !== currentFormat) {
           GM_setValue(GM_OUTPUT_FILE_FORMAT, newFormat);
-          alert("Filename format updated successfully!");
           console.log("New filename format saved:", newFormat);
-        } else if (newFormat === currentFormat) {
-          // User clicked OK but didn't change the value, or entered same value
-          console.log("Filename format not changed.");
-        } else {
-          // User clicked Cancel
-          console.log("Filename format update cancelled.");
         }
+
+        // Show download images toggle
+        const toggleImages = window.confirm(
+          `+++++++  ${EXPORT_BUTTON_TITLE_PREFIX}  +++++++\n\n` +
+            `DOWNLOAD IMAGES (Gemini only)\n\n` +
+            `Current setting: ${downloadImages ? "ENABLED" : "DISABLED"}\n\n` +
+            `When enabled, images will be downloaded alongside Markdown exports.\n` +
+            `Image URLs in the markdown will be replaced with local filenames.\n\n` +
+            `Click OK to ENABLE image downloads.\n` +
+            `Click Cancel to DISABLE image downloads.`
+        );
+
+        GM_setValue(GM_DOWNLOAD_IMAGES, toggleImages);
+        console.log("Download images setting:", toggleImages ? "ENABLED" : "DISABLED");
+        
+        alert(
+          "Settings updated successfully!\n\n" +
+            `• Filename format: ${newFormat !== null ? newFormat : currentFormat}\n` +
+            `• Download images: ${toggleImages ? "ENABLED" : "DISABLED"}`
+        );
       });
       container.appendChild(settingsButton);
       // --- End Settings Button ---
