@@ -1765,6 +1765,7 @@
      */
     getChatUrl(conversationElement) {
       // The conversation element may itself be an <a> tag or contain one
+      console.log('[AICE DEBUG] getChatUrl called on:', conversationElement.tagName, 'href:', conversationElement.href, 'outerHTML:', conversationElement.outerHTML.substring(0, 200));
       if (conversationElement.tagName === 'A' && conversationElement.href && conversationElement.href.includes('/app/')) {
         return conversationElement.href;
       }
@@ -1772,6 +1773,7 @@
       if (link) {
         return link.href;
       }
+      console.warn('[AICE DEBUG] getChatUrl returning null!');
       return null;
     },
 
