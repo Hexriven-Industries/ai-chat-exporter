@@ -779,6 +779,7 @@
       for (const item /* @type {HTMLElement} */ of messageItems) {
         let author = "";
         let messageContentElem = null;
+        let thinkingContentElem = null;
 
         const tagName = item.tagName.toLowerCase();
 
@@ -788,6 +789,13 @@
         } else if (tagName === "model-response") {
           author = "ai";
           messageContentElem = item.querySelector("message-content");
+          
+          // Check for thinking/chain-of-thought block
+          const thinkingBlock = item.querySelector('div[data-test-id="thoughts-content"]');
+          if (thinkingBlock) {
+            // Extract the actual thinking content (message-content inside the thinking block)
+            thinkingContentElem = thinkingBlock.querySelector("message-content");
+          }
         }
 
         if (!messageContentElem) continue;
@@ -797,14 +805,22 @@
           .toString(36)
           .substring(2, 9)}`;
 
-        messages.push({
+        const messageData = {
           id: messageId, // Unique ID
           author: author,
           contentHtml: messageContentElem, // Store the direct DOM Element
           contentText: messageContentElem.innerText.trim(),
           timestamp: new Date(),
           originalIndex: chatIndex, // Keep original index for outline
-        });
+        };
+
+        // Add thinking content if it exists (Gemini 2.0 Flash Thinking / 2.5 Pro)
+        if (thinkingContentElem) {
+          messageData.thinkingHtml = thinkingContentElem;
+          messageData.thinkingText = thinkingContentElem.innerText.trim();
+        }
+
+        messages.push(messageData);
 
         if (author === "ai") chatIndex++;
       }
@@ -874,6 +890,22 @@
             msg.contentText.replace(/\n/g, "\n> ") +
             "\n\n";
         } else {
+          // Handle thinking block if present (Gemini chain-of-thought)
+          let thinkingMarkdown = "";
+          if (msg.thinkingHtml) {
+            try {
+              const thinkingContent = turndownServiceInstance.turndown(msg.thinkingHtml);
+              thinkingMarkdown = `<details><summary>💭 Chain of Thought</summary>\n\n${thinkingContent}\n\n</details>\n\n`;
+            } catch (e) {
+              console.error(
+                `Error converting thinking block for message ${msg.id} to Markdown:`,
+                e
+              );
+              // Fallback to text if conversion fails
+              thinkingMarkdown = `<details><summary>💭 Chain of Thought</summary>\n\n${msg.thinkingText || "[Error extracting thinking content]"}\n\n</details>\n\n`;
+            }
+          }
+
           let markdownContent;
           try {
             markdownContent = turndownServiceInstance.turndown(msg.contentHtml);
@@ -884,7 +916,9 @@
             );
             markdownContent = `[CONVERSION ERROR: Failed to render this section. Original content below]\n\n\`\`\`\n${msg.contentText}\n\`\`\`\n`;
           }
-          content += markdownContent + "\n\n" + MARKDOWN_BACK_TO_TOP_LINK;
+          
+          // Prepend thinking before the AI response
+          content += thinkingMarkdown + markdownContent + "\n\n" + MARKDOWN_BACK_TO_TOP_LINK;
         }
         // Removed the incorrect increment logic from here
       });
@@ -937,6 +971,21 @@
           return markdownContent;
         }
       };
+      
+      const processThinkingContent = function (msg) {
+        if (!msg.thinkingHtml) return null;
+        
+        try {
+          return turndownServiceInstance.turndown(msg.thinkingHtml);
+        } catch (e) {
+          console.error(
+            `Error converting thinking block for message ${msg.id} to Markdown:`,
+            e
+          );
+          return msg.thinkingText || null;
+        }
+      };
+      
       const jsonOutput = {
         title: chatData.title,
         tags: chatData.tags,
@@ -945,11 +994,21 @@
         exporter: EXPORTER_VERSION,
         date: chatData.exportedAt.toISOString(),
         url: chatData.threadUrl,
-        messages: chatData.messages.map((msg) => ({
-          id: msg.id.split("-").slice(0, 2).join("-"), // Keep the ID for reference in JSON
-          author: msg.author,
-          content: processMessageContent(msg),
-        })),
+        messages: chatData.messages.map((msg) => {
+          const messageObj = {
+            id: msg.id.split("-").slice(0, 2).join("-"), // Keep the ID for reference in JSON
+            author: msg.author,
+            content: processMessageContent(msg),
+          };
+          
+          // Add thinking field if it exists (Gemini chain-of-thought)
+          const thinking = processThinkingContent(msg);
+          if (thinking) {
+            messageObj.thinking = thinking;
+          }
+          
+          return messageObj;
+        }),
       };
 
       const fileName = Utils.formatFileName(
