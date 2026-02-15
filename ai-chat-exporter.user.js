@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.8.1
+// @version      2.9.0
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -20,7 +20,7 @@
   "use strict";
 
   // --- Global Constants ---
-  const EXPORTER_VERSION = "2.8.1";
+  const EXPORTER_VERSION = "2.9.0";
   const EXPORT_CONTAINER_ID = "export-controls-container";
   const OUTLINE_CONTAINER_ID = "export-outline-container"; // ID for the outline div
   const DOM_READY_TIMEOUT = 1000;
@@ -1750,6 +1750,56 @@
     },
 
     /**
+     * Scroll the Gemini sidebar to load all lazy-loaded conversations.
+     * Gemini only renders conversations visible in the viewport, so we must
+     * scroll the sidebar container to the bottom repeatedly until no new
+     * conversations appear.
+     */
+    async scrollSidebarToLoadAll() {
+      // The sidebar's scrollable container — find the parent of conversation items
+      const firstConv = document.querySelector('[data-test-id="conversation"]');
+      if (!firstConv) return 0;
+
+      // Walk up to find the scrollable container
+      let scrollContainer = firstConv.parentElement;
+      while (scrollContainer && scrollContainer.scrollHeight <= scrollContainer.clientHeight) {
+        scrollContainer = scrollContainer.parentElement;
+      }
+      if (!scrollContainer) {
+        console.warn("Could not find scrollable sidebar container");
+        return document.querySelectorAll('[data-test-id="conversation"]').length;
+      }
+
+      console.log("[BatchExport] Scrolling sidebar to load all conversations...");
+      let previousCount = 0;
+      let stableRounds = 0;
+      const maxStableRounds = 3; // Stop after 3 rounds with no new items
+
+      while (stableRounds < maxStableRounds) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        await new Promise(r => setTimeout(r, 500));
+
+        const currentCount = document.querySelectorAll('[data-test-id="conversation"]').length;
+        console.log(`[BatchExport] Sidebar scroll: ${currentCount} conversations loaded`);
+
+        if (currentCount === previousCount) {
+          stableRounds++;
+        } else {
+          stableRounds = 0;
+          previousCount = currentCount;
+        }
+      }
+
+      // Scroll back to top so oldest-first traversal starts clean
+      scrollContainer.scrollTop = 0;
+      await new Promise(r => setTimeout(r, 300));
+
+      const finalCount = document.querySelectorAll('[data-test-id="conversation"]').length;
+      console.log(`[BatchExport] Sidebar fully loaded: ${finalCount} conversations`);
+      return finalCount;
+    },
+
+    /**
      * Get all conversation items from Gemini sidebar
      */
     getAllConversations() {
@@ -1976,6 +2026,10 @@
 
       // Load previously exported chats
       this.loadExportedChats();
+
+      // Scroll sidebar to load ALL conversations (Gemini lazy-loads them)
+      const loadedCount = await this.scrollSidebarToLoadAll();
+      console.log(`[BatchExport] Loaded ${loadedCount} conversations from sidebar scroll`);
 
       // Get all conversations
       const allConversations = this.getAllConversations();
