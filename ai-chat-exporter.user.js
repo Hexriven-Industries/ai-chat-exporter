@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.8.0
+// @version      2.8.1
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -20,7 +20,7 @@
   "use strict";
 
   // --- Global Constants ---
-  const EXPORTER_VERSION = "2.8.0";
+  const EXPORTER_VERSION = "2.8.1";
   const EXPORT_CONTAINER_ID = "export-controls-container";
   const OUTLINE_CONTAINER_ID = "export-outline-container"; // ID for the outline div
   const DOM_READY_TIMEOUT = 1000;
@@ -1765,7 +1765,6 @@
      */
     getChatUrl(conversationElement) {
       // The conversation element may itself be an <a> tag or contain one
-      console.log('[AICE DEBUG] getChatUrl called on:', conversationElement.tagName, 'href:', conversationElement.href, 'outerHTML:', conversationElement.outerHTML.substring(0, 200));
       if (conversationElement.tagName === 'A' && conversationElement.href && conversationElement.href.includes('/app/')) {
         return conversationElement.href;
       }
@@ -1773,7 +1772,6 @@
       if (link) {
         return link.href;
       }
-      console.warn('[AICE DEBUG] getChatUrl returning null!');
       return null;
     },
 
@@ -1876,14 +1874,16 @@
 
       const progressText = document.getElementById("batch-export-progress-text");
       if (progressText) {
-        progressText.innerHTML = `
-          <div style="font-size: 16px; margin-bottom: 8px;">
-            Exporting ${current} / ${total}
-          </div>
-          <div style="font-size: 12px; color: rgba(255,255,255,0.8); font-style: italic;">
-            ${Utils.truncate(chatTitle, 50)}
-          </div>
-        `;
+        // Use DOM methods instead of innerHTML to avoid TrustedHTML CSP violations
+        while (progressText.firstChild) progressText.removeChild(progressText.firstChild);
+        const countDiv = document.createElement("div");
+        countDiv.style.cssText = "font-size: 16px; margin-bottom: 8px;";
+        countDiv.textContent = `Exporting ${current} / ${total}`;
+        progressText.appendChild(countDiv);
+        const titleDiv = document.createElement("div");
+        titleDiv.style.cssText = "font-size: 12px; color: rgba(255,255,255,0.8); font-style: italic;";
+        titleDiv.textContent = Utils.truncate(chatTitle, 50);
+        progressText.appendChild(titleDiv);
       }
     },
 
