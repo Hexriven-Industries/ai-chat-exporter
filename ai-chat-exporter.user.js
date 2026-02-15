@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.9.0
+// @version      2.9.1
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -20,7 +20,7 @@
   "use strict";
 
   // --- Global Constants ---
-  const EXPORTER_VERSION = "2.9.0";
+  const EXPORTER_VERSION = "2.9.1";
   const EXPORT_CONTAINER_ID = "export-controls-container";
   const OUTLINE_CONTAINER_ID = "export-outline-container"; // ID for the outline div
   const DOM_READY_TIMEOUT = 1000;
@@ -1773,14 +1773,23 @@
       console.log("[BatchExport] Scrolling sidebar to load all conversations...");
       let previousCount = 0;
       let stableRounds = 0;
-      const maxStableRounds = 3; // Stop after 3 rounds with no new items
+      const maxStableRounds = 5; // Stop after 5 rounds with no new items
 
       while (stableRounds < maxStableRounds) {
+        // Scroll to absolute bottom
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 1500));
 
-        const currentCount = document.querySelectorAll('[data-test-id="conversation"]').length;
-        console.log(`[BatchExport] Sidebar scroll: ${currentCount} conversations loaded`);
+        // Also try scrolling the last conversation element into view
+        // in case scrollHeight isn't updating fast enough
+        const allConvs = document.querySelectorAll('[data-test-id="conversation"]');
+        if (allConvs.length > 0) {
+          allConvs[allConvs.length - 1].scrollIntoView({ block: 'end' });
+          await new Promise(r => setTimeout(r, 1000));
+        }
+
+        const currentCount = allConvs.length;
+        console.log(`[BatchExport] Sidebar scroll: ${currentCount} conversations loaded (stable: ${stableRounds}/${maxStableRounds})`);
 
         if (currentCount === previousCount) {
           stableRounds++;
