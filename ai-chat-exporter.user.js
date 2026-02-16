@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.11.0
+// @version      2.12.0
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -20,7 +20,7 @@
   "use strict";
 
   // --- Global Constants ---
-  const EXPORTER_VERSION = "2.11.0";
+  const EXPORTER_VERSION = "2.12.0";
   const EXPORT_CONTAINER_ID = "export-controls-container";
   const OUTLINE_CONTAINER_ID = "export-outline-container"; // ID for the outline div
   const DOM_READY_TIMEOUT = 1000;
@@ -2028,6 +2028,9 @@
         
         // Expand all thinking blocks after full chat is loaded
         await ChatExporter.expandAllThinkingBlocks();
+
+      // Show skip button during auto-scroll
+      UIManager.showSkipButton();
         
         // Brief stabilization pause
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -2044,6 +2047,9 @@
         }
 
         // Regenerate outline with fully loaded data
+      // Hide skip button when auto-scroll completes or is skipped
+      UIManager.hideSkipButton();
+
         UIManager.addOutlineControls();
         await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -2226,6 +2232,8 @@
     _outlineIsCollapsed: false, // State for the outline collapse
     _lastProcessedChatUrl: null, // Track the last processed chat URL for Gemini
     _initialListenersAttached: false, // Track if the URL change handlers are initialized
+    _shouldSkipScroll: false, // Flag to skip auto-scroll process
+    _skipButtonId: "exporter-skip-button", // ID for the skip button element
 
     /**
      * Determines the appropriate width for the alert based on the chat's content area.
@@ -2432,6 +2440,9 @@
           break;
         case GEMINI:
           await ChatExporter.expandAllThinkingBlocks();
+
+      // Show skip button during auto-scroll
+      UIManager.showSkipButton();
           freshChatData = ChatExporter.extractGeminiChatData(document);
           break;
         default:
@@ -3008,6 +3019,66 @@
      * Attempts to auto-scroll the Gemini chat to the top to load all messages.
      * This function uses an iterative approach to handle dynamic loading.
      */
+
+    /**
+     * Show a floating Skip button during auto-scroll
+     */
+    showSkipButton: function() {
+      if (document.getElementById(this._skipButtonId)) {
+        return;
+      }
+
+      const skipButton = document.createElement("div");
+      skipButton.id = this._skipButtonId;
+      skipButton.textContent = "⏭️ Skip Auto-Scroll";
+      skipButton.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 10000;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-family: ${FONT_STACK};
+        font-size: 14px;
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        transition: transform 0.2s, box-shadow 0.2s;
+        user-select: none;
+      `;
+
+      skipButton.onmouseover = () => {
+        skipButton.style.transform = "scale(1.05)";
+        skipButton.style.boxShadow = "0 6px 16px rgba(0,0,0,0.4)";
+      };
+
+      skipButton.onmouseout = () => {
+        skipButton.style.transform = "scale(1)";
+        skipButton.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+      };
+
+      skipButton.onclick = () => {
+        this._shouldSkipScroll = true;
+        console.log("[Skip] User clicked skip button - aborting auto-scroll");
+        this.showAlert("Skipping auto-scroll... Proceeding with export.");
+      };
+
+      document.body.appendChild(skipButton);
+    },
+
+    /**
+     * Hide the Skip button
+     */
+    hideSkipButton: function() {
+      const skipButton = document.getElementById(this._skipButtonId);
+      if (skipButton) {
+        skipButton.remove();
+      }
+      this._shouldSkipScroll = false;
+    },
+
     autoScrollToTop: async function () {
       if (CURRENT_PLATFORM !== GEMINI) {
         // console.log("autoScrollToTop: Not on a Gemini hostname. Returning early.");
@@ -3141,7 +3212,15 @@
       // Expand all thinking blocks before auto-scroll loop
       await ChatExporter.expandAllThinkingBlocks();
 
+      // Show skip button during auto-scroll
+      UIManager.showSkipButton();
+
       while (true) {
+        // Check if user clicked skip button
+        if (UIManager._shouldSkipScroll) {
+          console.log("[Skip] Auto-scroll aborted by user");
+          break;
+        }
         scrollableElement.scrollTop = 0;
         await delay(50); // Small delay after scroll
 
@@ -3199,6 +3278,9 @@
       // UIManager.showAlert(
       //   "Auto-scroll complete. You can now export your chat."
       // );
+      // Hide skip button when auto-scroll completes or is skipped
+      UIManager.hideSkipButton();
+
       UIManager.addOutlineControls();
     },
 
@@ -3242,6 +3324,9 @@
         }
         // Always ensure outline controls are present and regenerate content on changes
         // This covers new messages, and for Gemini, scrolling up to load more content.
+      // Hide skip button when auto-scroll completes or is skipped
+      UIManager.hideSkipButton();
+
         UIManager.addOutlineControls();
       });
 
@@ -3285,6 +3370,9 @@
                   newChatData.messages.length >
                     ChatExporter._currentChatData.messages.length)
               ) {
+      // Hide skip button when auto-scroll completes or is skipped
+      UIManager.hideSkipButton();
+
                 UIManager.addOutlineControls(); // Regenerate outline
               }
             }, 500); // Debounce scroll events
@@ -3347,6 +3435,9 @@
         setTimeout(() => {
           // console.log("Timeout elapsed. Adding export and outline controls.");
           UIManager.addExportControls();
+      // Hide skip button when auto-scroll completes or is skipped
+      UIManager.hideSkipButton();
+
           UIManager.addOutlineControls(); // Add outline after buttons
           // New: Initiate auto-scroll for Gemini after controls are set up
           // console.log("Checking if current host is a Gemini hostname...");
@@ -3363,6 +3454,9 @@
           setTimeout(() => {
             // console.log("DOMContentLoaded event fired. Adding export and outline controls after timeout.");
             UIManager.addExportControls();
+      // Hide skip button when auto-scroll completes or is skipped
+      UIManager.hideSkipButton();
+
             UIManager.addOutlineControls(); // Add outline after buttons
             // New: Initiate auto-scroll for Gemini after controls are set up
             // console.log("Checking if current host is a Gemini hostname (from DOMContentLoaded).");
@@ -3384,5 +3478,127 @@
   };
 
   // --- Script Initialization ---
+
+  // --- Menu Command Handlers ---
+
+  /**
+   * Scroll Up (Chat View) - Manually trigger auto-scroll to load all messages
+   */
+  async function scrollUpChatView() {
+    if (CURRENT_PLATFORM !== GEMINI) {
+      alert("This feature is only available for Gemini.");
+      return;
+    }
+    
+    console.log("[Menu] Starting manual scroll up to load all messages...");
+    UIManager.showAlert("Scrolling up to load all messages... This may take a while.");
+    
+    let scrollableElement =
+      document.querySelector('[data-test-id="chat-history-container"]') ||
+      document.querySelector("#chat-history") ||
+      document.querySelector("main") ||
+      document.documentElement;
+
+    if (!scrollableElement) {
+      alert("Error: Could not find chat scroll area.");
+      return;
+    }
+
+    const SCROLL_DELAY = 500;
+    const MAX_STABLE_ROUNDS = 6;
+    let previousMessageCount = -1;
+    let stableRounds = 0;
+
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const waitForProgressBarToDisappear = async () => {
+      const maxWait = 10000;
+      const startTime = Date.now();
+      while (Date.now() - startTime < maxWait) {
+        const progressBar = document.querySelector("mat-progress-bar.mdc-linear-progress--indeterminate");
+        if (!progressBar || (progressBar.offsetWidth === 0 && progressBar.offsetHeight === 0)) {
+          return true;
+        }
+        await delay(50);
+      }
+      return false;
+    };
+
+    while (stableRounds < MAX_STABLE_ROUNDS) {
+      scrollableElement.scrollTop = 0;
+      await delay(50);
+      await waitForProgressBarToDisappear();
+
+      const currentMessages = document.querySelectorAll(GEMINI_MESSAGE_ITEM_SELECTOR);
+      const currentMessageCount = currentMessages.length;
+
+      console.log(`[Menu Scroll Up] Messages loaded: ${currentMessageCount} (stable: ${stableRounds}/${MAX_STABLE_ROUNDS})`);
+
+      if (currentMessageCount > previousMessageCount) {
+        previousMessageCount = currentMessageCount;
+        stableRounds = 0;
+      } else {
+        stableRounds++;
+      }
+
+      await delay(SCROLL_DELAY);
+    }
+
+    UIManager.showAlert(`Scroll complete! Loaded ${previousMessageCount} messages.`);
+    console.log(`[Menu Scroll Up] Complete. Total messages: ${previousMessageCount}`);
+  }
+
+  /**
+   * Scroll Down (Sidebar) - Load all conversations in the sidebar
+   */
+  async function scrollDownSidebar() {
+    if (CURRENT_PLATFORM !== GEMINI) {
+      alert("This feature is only available for Gemini.");
+      return;
+    }
+    
+    console.log("[Menu] Starting sidebar scroll to load all conversations...");
+    UIManager.showAlert("Scrolling sidebar to load all conversations... Please wait.");
+    
+    const count = await BatchExporter.scrollSidebarToLoadAll();
+    
+    UIManager.showAlert(`Sidebar scroll complete! Loaded ${count} conversations.`);
+    console.log(`[Menu Scroll Down] Complete. Total conversations: ${count}`);
+  }
+
+  /**
+   * Clear Export History - Reset all exported chat tracking
+   */
+  function clearExportHistory() {
+    const confirmed = confirm(
+      "This will clear all export history tracking.\n\n" +
+      "All chats will be re-exported on the next batch export.\n\n" +
+      "Are you sure you want to continue?"
+    );
+    
+    if (!confirmed) {
+      console.log("[Menu] Clear export history cancelled by user.");
+      return;
+    }
+    
+    const exportedCount = BatchExporter.exportedChats.size;
+    const keys = [
+      BatchExporter.BATCH_EXPORTED_CHATS_KEY,
+      BatchExporter.BATCH_EXPORTED_COUNTS_KEY
+    ];
+    
+    BatchExporter.clearExportedHistory();
+    
+    console.log(`[Menu] Cleared export history: ${exportedCount} chats removed.`);
+    console.log(`[Menu] Cleared localStorage keys: ${keys.join(', ')}`);
+    
+    alert(`Export history cleared!\n\nRemoved ${exportedCount} tracked chats.`);
+  }
+
+  // --- Register Menu Commands ---
+  GM_registerMenuCommand("🔼 Scroll Up (Load All Messages)", scrollUpChatView);
+  GM_registerMenuCommand("🔽 Scroll Down (Load All Conversations)", scrollDownSidebar);
+  GM_registerMenuCommand("🗑️ Clear Export History", clearExportHistory);
+
   UIManager.init();
 })();
