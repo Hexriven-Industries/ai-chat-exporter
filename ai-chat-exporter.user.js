@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.12.1
+// @version      2.12.2
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -3301,10 +3301,8 @@
         newUrl.includes("/app");
 
       if (isGeminiChatUrl) {
-        // Trigger auto-scroll for valid Gemini chat URLs.
-        setTimeout(() => {
-          UIManager.autoScrollToTop();
-        }, 100); // Small delay to allow DOM to update before triggering
+        // Auto-scroll on nav removed — use menu command instead
+        console.log('[AICE] Gemini chat URL detected:', newUrl);
       } else {
         console.log(
           "URL is not a Gemini chat URL. Skipping auto-scroll for:",
