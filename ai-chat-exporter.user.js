@@ -853,11 +853,14 @@
       let title = DEFAULT_CHAT_TITLE;
 
       // Prioritize title from header bar, then sidebar, then document title
+      const conversationTitle = doc.querySelector('span[data-test-id="conversation-title"]')?.textContent?.trim();
       const headerTitle = doc.querySelector('span[data-test-id="conversation-title"]');
       const sidebarActiveChatItem = doc.querySelector(
         GEMINI_SIDEBAR_ACTIVE_CHAT_SELECTOR
       );
-      if (headerTitle && headerTitle.textContent.trim()) {
+      if (conversationTitle) {
+        title = conversationTitle;
+      } else if (headerTitle && headerTitle.textContent.trim()) {
         title = headerTitle.textContent.trim();
       } else if (sidebarActiveChatItem && sidebarActiveChatItem.textContent.trim()) {
         title = sidebarActiveChatItem.textContent.trim();
