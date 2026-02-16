@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT / Claude / Copilot / Gemini AI Chat Exporter by RevivalStack
 // @namespace    https://github.com/revivalstack/chatgpt-exporter
-// @version      2.12.2
+// @version      2.12.3
 // @description  Export your ChatGPT, Claude, Copilot or Gemini chat into a properly and elegantly formatted Markdown or JSON.
 // @author       Mic Mejia (Refactored by Google Gemini)
 // @homepage     https://github.com/micmejia
@@ -2441,9 +2441,6 @@
           break;
         case GEMINI:
           await ChatExporter.expandAllThinkingBlocks();
-
-      // Show skip button during auto-scroll
-      UIManager.showSkipButton();
           freshChatData = ChatExporter.extractGeminiChatData(document);
           break;
         default:
@@ -3316,17 +3313,18 @@
      * and to regenerate the outline on DOM changes.
      */
     initObserver() {
+      let _observerTimeout = null;
       const observer = new MutationObserver((mutations) => {
-        // Only re-add export controls if they are missing
-        if (!document.querySelector(`#${EXPORT_CONTAINER_ID}`)) {
-          UIManager.addExportControls();
-        }
-        // Always ensure outline controls are present and regenerate content on changes
-        // This covers new messages, and for Gemini, scrolling up to load more content.
-      // Hide skip button when auto-scroll completes or is skipped
-      UIManager.hideSkipButton();
-
-        UIManager.addOutlineControls();
+        // Debounce: batch rapid DOM mutations into a single update
+        if (_observerTimeout) return;
+        _observerTimeout = setTimeout(() => {
+          _observerTimeout = null;
+          // Only re-add export controls if they are missing
+          if (!document.querySelector(`#${EXPORT_CONTAINER_ID}`)) {
+            UIManager.addExportControls();
+          }
+          UIManager.addOutlineControls();
+        }, 500);
       });
 
       // Selector that includes chat messages and where new messages are added
@@ -3438,14 +3436,6 @@
       UIManager.hideSkipButton();
 
           UIManager.addOutlineControls(); // Add outline after buttons
-          // New: Initiate auto-scroll for Gemini after controls are set up
-          // console.log("Checking if current host is a Gemini hostname...");
-          if (CURRENT_PLATFORM === GEMINI) {
-            setTimeout(() => {
-              // console.log("Delayed auto-scroll initiated."); // Debug log
-              UIManager.autoScrollToTop(); // This call will now use the async logic below
-            }, AUTOSCROLL_INITIAL_DELAY);
-          }
         }, DOM_READY_TIMEOUT); // DOM_READY_TIMEOUT is assumed to be defined elsewhere, e.g., 1000ms
       } else {
         // console.log("DOM not yet ready. Adding DOMContentLoaded listener.");
@@ -3457,14 +3447,6 @@
       UIManager.hideSkipButton();
 
             UIManager.addOutlineControls(); // Add outline after buttons
-            // New: Initiate auto-scroll for Gemini after controls are set up
-            // console.log("Checking if current host is a Gemini hostname (from DOMContentLoaded).");
-            if (CURRENT_PLATFORM === GEMINI) {
-              setTimeout(() => {
-                // console.log("Delayed auto-scroll initiated (from DOMContentLoaded)."); // Debug log
-                UIManager.autoScrollToTop(); // This call will now use the async logic below
-              }, AUTOSCROLL_INITIAL_DELAY);
-            }
           }, DOM_READY_TIMEOUT)
         );
       }
